@@ -46,6 +46,7 @@ class LearnMIDI:
         self.ledsettings = ledsettings
         self.midiports = midiports
         self.ledstrip = ledstrip
+        self.traspose = 0
 
         self.loading = 0
         self.practice = int(usersettings.get_setting_value("practice"))
@@ -195,8 +196,9 @@ class LearnMIDI:
         while self.loading < 4 and self.loading > 0:
             time.sleep(1)
 
-        if not self.is_read_only_fs:
-            touch_file(song_path)
+        self.readonly(False)
+        touch_file(song_path)
+        self.readonly(True)
 
         if song_path in self.is_loaded_midi.keys():
             return
@@ -298,7 +300,7 @@ class LearnMIDI:
 
     def show_notes_to_press(self, current_index, notes_to_press):
         for note in notes_to_press:
-            note_position = get_note_position(note, self.ledstrip, self.ledsettings)
+            note_position = get_note_position(note, self.ledstrip, self.ledsettings, self.traspose)
             isWhite = get_key_color(note)
 
             red = 255
@@ -342,14 +344,14 @@ class LearnMIDI:
                 if not scope_data.channel[channel].isEmpty():
                     scope = scope_data.channel[channel].low
                     if scope.led_count > 0:
-                        note_position = get_note_position(scope.note, self.ledstrip, self.ledsettings)
+                        note_position = get_note_position(scope.note, self.ledstrip, self.ledsettings, self.traspose)
                         s = 2 if scope.led_count == 3 else 0
                         for i in range(scope.led_count):
                             led = note_position - i - s - 1
                             self.set_pixel_color(led, markerColor, "MARKER")
                     scope = scope_data.channel[channel].high
                     if scope.led_count > 0:
-                        note_position = get_note_position(scope.note, self.ledstrip, self.ledsettings)
+                        note_position = get_note_position(scope.note, self.ledstrip, self.ledsettings, self.traspose)
                         s = 2 if scope.led_count == 3 else 0
                         for i in range(scope.led_count):
                             led = note_position + i + s + 1
@@ -404,7 +406,7 @@ class LearnMIDI:
                     self.restart_blind = True
             elif msg_in.type in ("note_off", "note_on"):
                 note = int(find_between(str(msg_in), "note=", " "))
-                note_position = get_note_position(note, self.ledstrip, self.ledsettings)
+                note_position = get_note_position(note, self.ledstrip, self.ledsettings, self.traspose)
                 if "note_off" in str(msg_in):
                     velocity = 0
                     if note_position in self.switch_off_leds:
@@ -516,8 +518,8 @@ class LearnMIDI:
         return Color(gb * new_brightness, rb * new_brightness, bb * new_brightness)
 
     def color_led_strip_borders(self, color, start, end):
-        lowest = get_note_position(21, self.ledstrip, self.ledsettings)
-        highest = get_note_position(108, self.ledstrip, self.ledsettings)
+        lowest = get_note_position(21, self.ledstrip, self.ledsettings, self.traspose)
+        highest = get_note_position(108, self.ledstrip, self.ledsettings, self.traspose)
         for i in range(start, end):
             self.ledstrip.strip.setPixelColor(lowest - 3 - i, color)
             self.ledstrip.strip.setPixelColor(highest + 3 + i, color)
@@ -562,7 +564,7 @@ class LearnMIDI:
                 if not msg.is_meta:
                     # Calculate note position on the strip and display
                     if msg.type == 'note_on' or msg.type == 'note_off':
-                        note_position = get_note_position(msg.note, self.ledstrip, self.ledsettings)
+                        note_position = get_note_position(msg.note, self.ledstrip, self.ledsettings, self.traspose)
                         isWhite = get_key_color(msg.note)
                         if msg.velocity == 0 or msg.type == 'note_off':
                             red = 0
@@ -641,6 +643,9 @@ class LearnMIDI:
         if self.practice in (PRACTICE_PERFECTION, PRACTICE_PROGRESSIVE):
             end_measure = clamp(start_measure + self.get_measures_per_exercise(),
                                 start_measure, len(self.measure_data)-1)
+
+        while "note_index" not in self.measure_data[end_measure] and end_measure >= start_measure:
+            end_measure -= 1
 
         last_played_measure = -1
 
@@ -748,7 +753,7 @@ class LearnMIDI:
                         # Calculate note position on the strip and display
                         if ((msg.type == 'note_on' or msg.type == 'note_off') and msg.velocity > 0 and
                                 not self.blind_mode):
-                            note_position = get_note_position(msg.note, self.ledstrip, self.ledsettings)
+                            note_position = get_note_position(msg.note, self.ledstrip, self.ledsettings, self.traspose)
                             self.set_pixel_color(note_position, Color(16, 16, 16), None)
 
                             # skip show, if there are note_on events
@@ -811,7 +816,7 @@ class LearnMIDI:
                         if self.practice not in (PRACTICE_MELODY, PRACTICE_ARCADE, PRACTICE_PROGRESSIVE, PRACTICE_PERFECTION):
                             # Calculate note position on the strip and display
                             if ((hasattr(msg, "velocity") and msg.velocity == 0) and not self.blind_mode):
-                                note_position = get_note_position(msg.note, self.ledstrip, self.ledsettings)
+                                note_position = get_note_position(msg.note, self.ledstrip, self.ledsettings, self.traspose)
                                 self.set_pixel_color(note_position, Color(0, 0, 0), None)
                                 self.ledstrip.strip.show()
 

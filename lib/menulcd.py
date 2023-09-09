@@ -1291,6 +1291,7 @@ class MenuLCD:
                                                     value * self.speed_multiplier)
         if self.current_choice == "Traspose":
             self.casio.modify_traspose(value)
+            self.learning.traspose = self.casio.traspose
 
         if self.current_choice == "Tempo":
             self.casio.modify_metronome_tempo(value * self.speed_multiplier)

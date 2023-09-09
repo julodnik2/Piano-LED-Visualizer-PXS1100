@@ -357,7 +357,7 @@ while True:
                     pass
 
         # changing offset to adjust the distance between the LEDs to the key spacing
-        note_position = get_note_position(note, ledstrip, ledsettings)
+        note_position = get_note_position(note, ledstrip, ledsettings, learning.traspose)
 
         if (note_position >= ledstrip.led_number or note_position < 0) and control_change is False:
             continue
@@ -426,7 +426,7 @@ while True:
             else:
                 brightness = 1
 
-            isBlack = get_key_color(note)
+            isBlack = get_key_color(note-learning.traspose)
 
             if not isBlack:
                 red = max(green, blue)

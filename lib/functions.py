@@ -305,7 +305,8 @@ def get_key_color(note):
 # Get note position on the strip
 
 
-def get_note_position(note, ledstrip, ledsettings):
+def get_note_position(original_note, ledstrip, ledsettings, traspose):
+    note = original_note - traspose
     note_offsets = ledsettings.note_offsets
     note_offset = 0
     for i in range(0, len(note_offsets)):
@@ -789,7 +790,7 @@ def chords(scale, ledstrip, ledsettings, menu):
 
         for i in range(int(strip.numPixels() / density)):
             note = i + 21
-            note_position = get_note_position(note, ledstrip, ledsettings)
+            note_position = get_note_position(note, ledstrip, ledsettings, 0)
             c = get_scale_color(scale, note, ledsettings)
 
             leds_to_update.remove(note_position)
