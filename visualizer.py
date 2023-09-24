@@ -12,6 +12,7 @@ from lib.savemidi import SaveMIDI
 from lib.usersettings import UserSettings
 from lib.functions import *
 from lib.neopixel import *
+from lib.lcdmsg import SimpleMenuLCD
 import argparse
 import threading
 from webinterface import webinterface
@@ -92,11 +93,14 @@ GPIO.setup(KEY3, GPIO.IN, GPIO.PUD_UP)
 GPIO.setup(JPRESS, GPIO.IN, GPIO.PUD_UP)
 
 usersettings = UserSettings()
+midiports = MidiPorts(usersettings)
+lcd = SimpleMenuLCD(usersettings, args)
 while True:
-    midiports = MidiPorts(usersettings)
+    midiports.open_ports()
     if hasattr(midiports.playport, "send"):
         break
     time.sleep(1)
+    lcd.show_message("Switch on the piano!")
 
 ledsettings = LedSettings(usersettings)
 ledstrip = LedStrip(usersettings, ledsettings)
@@ -111,8 +115,6 @@ learning.add_instance(menu)
 
 menu.show()
 z = 0
-display_cycle = 0
-screen_hold_time = 16
 
 midiports.last_activity = time.time()
 
@@ -155,13 +157,9 @@ while True:
         elapsed_time = time.time() - saving.start_time
     except:
         elapsed_time = 0
-    if display_cycle >= 3:
-        display_cycle = 0
 
-        if elapsed_time > screen_hold_time:
-            menu.show()
-            timeshift_start = time.time()
-    display_cycle += 1
+    if not menu.screensaver_is_running and (time.time() - menu.last_redraw) > 5:
+        menu.show()
 
     if (time.time() - midiports.last_activity) > 1:
         usersettings.save_changes()

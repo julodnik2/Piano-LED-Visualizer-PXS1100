@@ -638,11 +638,11 @@ class LearnMIDI:
         start_measure = clamp(start_measure, 0, len(self.measure_data)-1)
         end_measure = int(self.end_point)
         end_measure = clamp(end_measure, start_measure,
-                            len(self.measure_data)-1)
+                            len(self.measure_data))
 
         if self.practice in (PRACTICE_PERFECTION, PRACTICE_PROGRESSIVE):
             end_measure = clamp(start_measure + self.get_measures_per_exercise(),
-                                start_measure, len(self.measure_data)-1)
+                                start_measure, len(self.measure_data))
 
         while "note_index" not in self.measure_data[end_measure] and end_measure >= start_measure:
             end_measure -= 1

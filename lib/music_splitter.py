@@ -1,17 +1,16 @@
 from lib.functions import midi_note_num_to_string
 import mido
 
-#
+
 # def midi_note_num_to_string(note_midi_idx):
 #    # Calculate the octave and note number
 #    octave = (note_midi_idx // 12) - 1
 #    note_num = note_midi_idx % 12
-#
 #    # Map the note number to a note letter and accidental
 #    notes = {0: 'C', 1: 'C#', 2: 'D', 3: 'Eb', 4: 'E', 5: 'F',
 #             6: 'F#', 7: 'G', 8: 'G#', 9: 'A', 10: 'Bb', 11: 'B'}
 #    return f"{notes[note_num]}{octave}"
-#
+
 
 # notes within this distance are considered part of same chord
 THRESHOLD_CHORD_NOTE_DISTANCE = 0.05
@@ -227,6 +226,10 @@ class MusicSplitter:
                     measure_start += measure_length
                     measure_data.append(
                         {'start': measure_start + tweak_measure_offset})
+        if measure_length is not None:
+            measure_data.append({'start': measure_length + measure_start + tweak_measure_offset})
+        else:
+            measure_data.append({'start': int(4 * time_signature * ticks_per_beat) + measure_start + tweak_measure_offset})
 
         # 2. Calculate in which note measures start. Snap to measure is taken into account here
         tweak_snap_to_measure = 5
@@ -245,6 +248,7 @@ class MusicSplitter:
                         and current_ticks >= measure_data[measure_pointer]["start"] - tweak_snap_to_measure):
                     measure_data[measure_pointer]['note_index'] = i
                     measure_pointer += 1
+        measure_data[len(measure_data)-1]['note_index'] = len(self.midi_messages)
         return measure_data
 
     def calculate_note_gaps(self, notes_time):
@@ -336,7 +340,7 @@ def get_tempo(mid):
 
 
 def test():
-    mid = mido.MidiFile('E:\\albeniz_cuba_notturno.mid')
+    mid = mido.MidiFile('E:\\strike-up-the-band.mid')
 
     # Get tempo and Ticks per beat
     song_tempo = get_tempo(mid)
@@ -386,4 +390,8 @@ def test():
             song_tracks.append(unfiltered_song_tracks[i])
             notes_time.append(unfiltered_notes_time[i])
 
-    music_splitter = MusicSplitter(ticks_per_beat, song_tracks, notes_time, song_tempo)
+    music_splitter = MusicSplitter(song_tracks, notes_time)
+    music_splitter.calculate_measure_and_split_data(ticks_per_beat, song_tempo)
+
+    split_data = music_splitter.split_data
+    measure_data = music_splitter.measure_data

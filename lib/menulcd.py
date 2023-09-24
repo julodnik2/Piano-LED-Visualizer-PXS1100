@@ -25,7 +25,10 @@ class MenuLCD:
         self.learning = learning
         self.saving = saving
         self.midiports = midiports
+        self.time_color = 0
         self.args = args
+        self.last_redraw = time.time()
+
         fontdir = "/usr/share/fonts/truetype/freefont"
         if args.fontdir != None:
             fontdir = args.fontdir
@@ -43,6 +46,8 @@ class MenuLCD:
             self.LCD = LCD_1in44.LCD()
             self.font = ImageFont.load_default()
             self.image = Image.open('webinterface/static/logo128_128.bmp')
+        self.font_score = ImageFont.truetype(self.score_ttf, self.scale(32))
+        self.font_measure = ImageFont.truetype(self.measure_ttf, self.scale(24))
 
         self.LCD.LCD_Init()
         self.LCD.LCD_ShowImage(self.rotate_image(self.image), 0, 0)
@@ -331,6 +336,7 @@ class MenuLCD:
         if self.screen_on == 0:
             return False
         with self.draw_lock:
+            self.last_redraw = time.time()
             if position == "default" and self.currentlocation:
                 position = self.currentlocation
                 refresh = 1
@@ -346,8 +352,13 @@ class MenuLCD:
             self.draw = ImageDraw.Draw(self.image)
             self.draw.text((self.scale(2), self.scale(5)), position.replace("_", " "), fill=self.text_color, font=self.font)
 
-            time_str = datetime.datetime.now().strftime("%H:%M")
-            self.draw.text((self.scale(95), self.scale(0)), time_str, fill="magenta", font=self.font)
+            self.time_color += 1
+            self.time_color %= 2
+            if self.time_color == 0:
+                time_str = datetime.datetime.now().strftime("%H:%M")
+            else:
+                time_str = datetime.datetime.now().strftime("%H.%M")
+            self.draw.text((self.scale(95), self.scale(0)), time_str, fill="white", font=self.font)
 
             # getting list of items in current menu
             staffs = self.DOMTree.getElementsByTagName(position)
@@ -782,8 +793,6 @@ class MenuLCD:
                     ],
                     fill="darkblue" if self.learning.blind_mode == False else (24, 0, 0)
                 )
-                font_score = ImageFont.truetype(self.score_ttf, self.scale(32))
-                font_measure = ImageFont.truetype(self.measure_ttf, self.scale(24))
                 self.midiports.last_activity = time.time()
                 color_score = "white"
 
@@ -801,9 +810,9 @@ class MenuLCD:
                 if self.learning.practice in (PRACTICE_ARCADE, PRACTICE_PERFECTION):
                     score = format(max(0, self.learning.current_score), '05.1f')
                     self.draw.text((self.scale(3), self.LCD.height-self.scale(40)), score,
-                                   fill=color_score, font=font_score)
+                                   fill=color_score, font=self.font_score)
                     self.draw.text((self.scale(90), self.LCD.height-self.scale(41)), str(self.learning.current_measure + 1),
-                                   fill="cyan", font=font_measure)
+                                   fill="cyan", font=self.font_measure)
                     if self.learning.prev_score is not None:
                         prev_score = format(max(0, self.learning.prev_score), '04.1f')
                         self.draw.text((self.scale(3), self.LCD.height-self.scale(9)), "prev: "+prev_score+" ("
@@ -811,10 +820,10 @@ class MenuLCD:
 
                 else:
                     self.draw.text((self.scale(3), self.LCD.height-self.scale(38)), str(self.learning.current_measure + 1),
-                                   fill="cyan", font=font_score)
+                                   fill="cyan", font=self.font_score)
 
                 self.draw.text((self.scale(90), self.LCD.height-self.scale(22)), str(self.learning.wrong_keys),
-                               fill="red", font=font_measure)
+                               fill="red", font=self.font_measure)
             self.LCD.LCD_ShowImage(self.rotate_image(self.image), 0, 0)
         # end lock
 

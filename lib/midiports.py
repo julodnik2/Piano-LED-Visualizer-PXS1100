@@ -2,22 +2,27 @@ import mido
 from lib import connectall
 import time
 
+
 class MidiPorts:
     def __init__(self, usersettings):
         self.usersettings = usersettings
         self.pending_queue = []
-        self.last_activity = 0
+        self.last_activity = 0.0
         self.inport = None
         self.playport = None
 
+    def open_ports(self):
         # checking if the input port was previously set by the user
         port = self.usersettings.get_setting_value("input_port")
         if port != "default":
+            if not port in mido.get_input_names():
+                return
             try:
                 self.inport = mido.open_input(port)
                 print("Inport loaded and set to " + port)
             except:
                 print("Can't load input port: " + port)
+                return
         else:
             # if not, try to find the new midi port
             try:
@@ -36,7 +41,7 @@ class MidiPorts:
                 self.playport = mido.open_output(port)
                 print("Playport loaded and set to " + port)
             except:
-                print("Can't load input port: " + port)
+                print("Can't load play port: " + port)
         else:
             # if not, try to find the new midi port
             try:
@@ -51,6 +56,12 @@ class MidiPorts:
 
         self.portname = "inport"
 
+    def close_ports(self):
+        if self.inport:
+            self.inport.close()
+        if self.playport:
+            self.playport.close()
+
     def connectall(self):
         # Reconnect the input and playports on a connectall
         self.reconnect_ports()
@@ -64,16 +75,16 @@ class MidiPorts:
         try:
             destroy_old = None
             if port == "inport":
-                destory_old = self.inport
+                destroy_old = self.inport
                 self.inport = mido.open_input(portname)
                 self.usersettings.change_setting_value("input_port", portname)
             elif port == "playport":
-                destory_old = self.playport
+                destroy_old = self.playport
                 self.playport = mido.open_output(portname)
                 self.usersettings.change_setting_value("play_port", portname)
             self.menu.render_message("Changing " + port + " to:", portname, 1500)
             if destroy_old != None:
-                destory_old.close()
+                destroy_old.close()
             self.menu.show()
         except:
             self.menu.render_message("Can't change " + port + " to:", portname, 1500)
