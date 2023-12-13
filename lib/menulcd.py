@@ -48,6 +48,8 @@ class MenuLCD:
             self.image = Image.open('webinterface/static/logo128_128.bmp')
         self.font_score = ImageFont.truetype(self.score_ttf, self.scale(32))
         self.font_measure = ImageFont.truetype(self.measure_ttf, self.scale(24))
+        self.unicode_font = ImageFont.truetype(fontdir + '/FreeMonoBold.ttf', self.scale(11))
+        self.tiny_font = ImageFont.truetype(self.score_ttf, self.scale(8))
 
         self.LCD.LCD_Init()
         self.LCD.LCD_ShowImage(self.rotate_image(self.image), 0, 0)
@@ -103,6 +105,26 @@ class MenuLCD:
         else:
             self.usersettings.change_setting_value(setting, "1")
             self.screensaver_settings[setting] = "1"
+
+    def update_bookmarks(self):
+        # Assume the first node is "bookmarks"
+        replace_node = self.DOMTree.getElementsByTagName("Learn_MIDI")[5]
+        bookmarks_mc = self.DOMTree.createElement("Learn_MIDI")
+        bookmarks_mc.appendChild(self.DOMTree.createTextNode(""))
+        bookmarks_mc.setAttribute("text", "Bookmarks")
+        replace_node.parentNode.replaceChild(bookmarks_mc, replace_node)
+
+        element = self.DOMTree.createElement("Bookmarks")
+        element.appendChild(self.DOMTree.createTextNode(""))
+        element.setAttribute("text", "Toggle")
+        bookmarks_mc.appendChild(element)
+
+        for pos in self.learning.get_bookmarks():
+            # List of songs for Learn_MIDI
+            element = self.DOMTree.createElement("Bookmarks")
+            element.appendChild(self.DOMTree.createTextNode(""))
+            element.setAttribute("text", str(pos))
+            bookmarks_mc.appendChild(element)
 
     def update_songs(self):
         # Assume the first node is "Choose song"
@@ -703,13 +725,13 @@ class MenuLCD:
 
                 text_position = 5 + 10 + offset
                 if text_position >= 15:
-                    #  Position 1: display Load song
+                    #  display Load song
                     self.draw.text((self.scale(90), self.scale(text_position)), str(self.learning.loadingList[self.learning.loading]),
                                    fill=self.text_color, font=self.font)
 
                 text_position += 10
                 if text_position >= 15:
-                    #  Position 3: display Practice
+                    #  display Practice
                     if self.learning.is_started_midi == 1:
                         self.draw.text((self.scale(65), self.scale(text_position)), "Stop",
                                        fill=self.text_color, font=self.font)
@@ -718,27 +740,33 @@ class MenuLCD:
                             self.learning.practiceList[self.learning.practice]),
                             fill=self.text_color, font=self.font)
                 text_position += 10
-                #  Position 4: display Start point
-                self.draw.text((self.scale(90), self.scale(text_position)), str(int(self.learning.start_point)),
-                               fill=self.text_color,
-                               font=self.font)
+                if text_position >= 15:
+                    #  display Start point
+                    self.draw.text((self.scale(90), self.scale(text_position)), str(int(self.learning.start_point)),
+                                   fill=self.text_color,
+                                   font=self.font)
                 text_position += 10
-                #  Position 5: display End point
+                #  display End point
                 self.draw.text((self.scale(90), self.scale(text_position)), str(int(self.learning.end_point)),
                                fill=self.text_color,
                                font=self.font)
                 text_position += 10
-                #  Position 6: display Step
+                #  display Step
                 self.draw.text((self.scale(90), self.scale(text_position)), self.learning.learnStepList[self.learning.learn_step],
                                fill=self.text_color,
-                               font=self.font)
+                               font=self.unicode_font)
                 text_position += 10
-                #  Position 7: display Set tempo
+                # display Bookmarks
+                self.draw.text((self.scale(65), self.scale(text_position + 2)), str(self.learning.get_bookmarks()).replace(" ", ""),
+                               fill="cyan",
+                               font=self.tiny_font)
+                text_position += 10
+                #  display Set tempo
                 self.draw.text((self.scale(90), self.scale(text_position)), str(self.learning.set_tempo) + "%",
                                fill=self.text_color,
                                font=self.font)
                 text_position += 10
-                #  Position 8,9: display Hands colors
+                #  display Hands colors
                 coordR = 2 + text_position
                 coordL = 12 + text_position
                 self.draw.rectangle([(self.scale(90), self.scale(coordR)), (self.LCD.width, self.scale(coordR + 7))],
@@ -746,11 +774,11 @@ class MenuLCD:
                 self.draw.rectangle([(self.scale(90), self.scale(coordL)), (self.LCD.width, self.scale(coordL + 7))],
                                     fill="rgb(" + str(self.learning.hand_colorList[self.learning.hand_colorL])[1:-1] + ")")
                 text_position += 20
-                #  Position 10: display Hands
+                #  display Hands
                 self.draw.text((self.scale(90), self.scale(text_position)), str(self.learning.handsList[self.learning.hands]),
                                fill=self.text_color, font=self.font)
                 text_position += 10
-                #  Position 11: display Mute hand
+                #  display Mute hand
                 self.draw.text((self.scale(90), self.scale(text_position)), str(
                     self.learning.mute_handList[self.learning.mute_hand]),
                     fill=self.text_color, font=self.font)
@@ -991,6 +1019,20 @@ class MenuLCD:
                 self.saving.is_playing_midi.clear()
                 self.render_message("Playing stopped", "", 2000)
                 fastColorWipe(self.ledstrip.strip, True, self.ledsettings)
+
+        if location == "Bookmarks":
+            if choice == "Toggle":
+                self.learning.toggle_bookmark()
+                self.update_bookmarks()
+                self.change_pointer(0)
+            else:
+                self.learning.start_point = int(choice)
+                self.learning.end_point = len(self.learning.measure_data)+1
+                self.go_back()
+                self.change_pointer(0)
+                self.change_pointer(0)
+                self.change_pointer(0)
+                self.change_pointer(0)
 
         # Learn MIDI
         if location == "Load_song":
@@ -1419,13 +1461,13 @@ class MenuLCD:
             if self.current_choice == "End point":
                 self.learning.change_end_point(value * self.speed_multiplier)
             if self.current_choice == "Set tempo":
-                self.learning.change_set_tempo(value)
+                self.learning.change_set_tempo(value * self.speed_multiplier)
             if self.current_choice == "Hand color R":
                 self.learning.change_hand_color(value, 'RIGHT')
             if self.current_choice == "Hand color L":
                 self.learning.change_hand_color(value, 'LEFT')
             if self.current_choice == "Learn step":
-                multiplier = 1 if self.speed_multiplier == 1 else 4
+                multiplier = 1 if self.speed_multiplier == 1 else 5
                 self.learning.change_learn_step(value*multiplier)
 
         self.show()

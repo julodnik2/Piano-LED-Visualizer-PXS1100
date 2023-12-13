@@ -25,10 +25,10 @@ class MusicSplitter:
         self.midi_messages = midi_messages
         self.notes_time = notes_time
 
-    def calculate_measure_and_split_data(self, ticks_per_beat, song_tempo):
+    def calculate_measure_and_split_data(self, ticks_per_beat, max_length):
         self.measure_data = self.calculate_measure_data(ticks_per_beat)
         self._gaps_array = self.calculate_note_gaps(self.notes_time)
-        self.split_data = self.do_split(song_tempo, ticks_per_beat)
+        self.split_data = self.do_split(ticks_per_beat, max_length)
 
     def find_note_with_same_time(self, notes_to_press, idx):
         channel = self.midi_messages[idx].channel
@@ -124,50 +124,67 @@ class MusicSplitter:
                     this_scope_data.channel[channel].high.note = highest_note_channel[channel]
         return this_scope_data
 
-    def do_split(self, song_tempo, ticks_per_beat):
+    def do_split(self, ticks_per_beat, max_length):
         accDelay = 0
         tDelay = 0
         msg_index = 0
-        notes_to_press = {}
+        collected_notes = {}
         accumulated_chord = None
         split_data: dict[int, ScopeData] = {}
+        release_note_count = 0
+        last_press_note_time = -11
 
+        measure_length = 100
+        currTime = 0
+        note_off_found = False
         for msg in self.midi_messages:
-            # Get time delay
-            tDelay = mido.tick2second(msg.time, ticks_per_beat, song_tempo)
+
+            if msg.is_meta and msg.type == 'time_signature':
+                time_signature = float(msg.numerator/msg.denominator)
+                measure_length = int(4 * time_signature * ticks_per_beat)
+
+            tDelay = msg.time / measure_length
+            accDelay += tDelay
+            currTime += tDelay
+
+            if tDelay > 0.05:
+                release_note_count = 0
 
             accDelay += tDelay
 
             if not msg.is_meta:
                 # Save notes to press
                 if msg.type == 'note_on' and msg.velocity > 0:
-                    if not notes_to_press:
+                    last_press_note_time = currTime
+                    if not collected_notes:
                         accDelay = 0    # start calculating from now how much time we accumulated
-                    if msg.note not in notes_to_press:
-                        notes_to_press[msg.note] = [
+                        note_off_found = False
+                    if msg.note not in collected_notes:
+                        collected_notes[msg.note] = [
                             {"idx": msg_index, "channel": msg.channel}]
                     else:
-                        notes_to_press[msg.note].append(
+                        collected_notes[msg.note].append(
                             {"idx": msg_index, "channel": msg.channel})
-                    if self.find_note_with_same_time(notes_to_press, msg_index) and accumulated_chord is None:
-                        accumulated_chord = self.notes_time[msg_index]
+                    if self.find_note_with_same_time(collected_notes, msg_index) and accumulated_chord is None:
+                        accumulated_chord = currTime
+                if msg.type == "note_off" and collected_notes:
+                    note_off_found = True
 
-            # Check notes to press
-            if not msg.is_meta:
                 if msg.channel in (0, 1):
                     current_hand = msg.channel
                     other_hand = 1 - msg.channel
 
                     gaps = self._gaps_array[msg_index]
-                    wait_for_user = False
-                    if accDelay >= 0.37:
-                        wait_for_user = True
+                    split_point_found = False
+                    msg_is_note_on_off = msg.type in ['note_on', 'note_off']
+                    if accDelay >= max_length-0.01:
+                        split_point_found = True
                     elif ((gaps['time_to_next'][current_hand] is None or gaps['time_to_next'][current_hand] > 0.12)
                           and (gaps['time_to_next'][other_hand] is None
                                or (gaps['time_to_next'][other_hand] > 0.05 and gaps['time_to_next'][other_hand] + gaps['time_to_prev'][other_hand] > 0.12))
                           ):
-                        wait_for_user = True
-                    elif (accumulated_chord is not None and accumulated_chord < self.notes_time[msg_index]
+                        split_point_found = True
+                    elif (accumulated_chord is not None and accumulated_chord < currTime
                           and (gaps['time_to_next'][0] is None or gaps['time_to_next'][0] > 0.02)
                           and (gaps['time_to_next'][1] is None or gaps['time_to_next'][1] > 0.02)):
                         chord0 = self.get_next_chord(msg_index, 0)
@@ -179,15 +196,30 @@ class MusicSplitter:
                         else:
                             first_chord = chord0 if self.notes_time[chord0[0]] < self.notes_time[chord1[0]] else chord1
                         if first_chord is not None and len(first_chord) > 1:
-                            wait_for_user = True
+                            split_point_found = True
 
-                    if (wait_for_user
-                            and msg.type in ['note_on', 'note_off']
-                            and notes_to_press
-                            and not still_notes_in_chord(self.midi_messages, msg_index)):
-                        split_data[msg_index] = self.calculate_scope_data(notes_to_press)
-                        notes_to_press.clear()
+                    if msg_is_note_on_off and msg.velocity == 0:
+                        release_note_count += 1
+                        if release_note_count > 1:
+                            split_point_found = True
+
+                    # there are keys to press
+                    # last key pressed longer than 0.1 ago
+                    if (split_point_found
+                                and msg_is_note_on_off
+                                and collected_notes
+                                and (
+                                    (last_press_note_time < currTime - 0.05 and (
+                                        accumulated_chord is None
+                                        or accumulated_chord < currTime - 0.05
+                                        or not still_notes_in_chord(self.midi_messages, msg_index))
+                                     ))
+                            or note_off_found
+                            ):
+                        split_data[msg_index] = self.calculate_scope_data(collected_notes)
+                        collected_notes.clear()
                         accumulated_chord = None
+                        note_off_found = False
                         accDelay = 0
 
             msg_index += 1
@@ -195,7 +227,7 @@ class MusicSplitter:
 
     def calculate_measure_data(self, ticks_per_beat):
         measure_data = []
-        time_signature = None
+        time_signature = 1
         current_ticks = 0
         current_ticks_in_measure = 0
 
@@ -340,10 +372,12 @@ def get_tempo(mid):
 
 
 def test():
+    # mid = mido.MidiFile('s:\\media\\mp3\\classical\\gershwin\\piano\\midi\\swanee.mid')
     mid = mido.MidiFile('E:\\strike-up-the-band.mid')
+    # mid = mido.MidiFile('E:\\sweet-and-low.mid')
+    # mid = mido.MidiFile('E:\\backup_piano\\piano_backup_24\\Piano-LED-Visualizer\\Songs\\Albeniz - Granada.mid')
 
     # Get tempo and Ticks per beat
-    song_tempo = get_tempo(mid)
     ticks_per_beat = mid.ticks_per_beat
 
     for k in range(len(mid.tracks)):
@@ -391,7 +425,159 @@ def test():
             notes_time.append(unfiltered_notes_time[i])
 
     music_splitter = MusicSplitter(song_tracks, notes_time)
-    music_splitter.calculate_measure_and_split_data(ticks_per_beat, song_tempo)
+    music_splitter.calculate_measure_and_split_data(ticks_per_beat, 0.125)
 
     split_data = music_splitter.split_data
     measure_data = music_splitter.measure_data
+
+    active_notes = {}
+    # Loop through each midi event and its corresponding time
+    accDelay = 0
+    body = ""
+    width_roll = 0
+    ZOOM = 120
+    message_index = -1
+    color_class = ["red", "green", "yellow", "blue"]
+    color_idx = 0
+    current_measure = -1
+    for midi_event in song_tracks:
+        message_index += 1
+
+        while (current_measure+1 < len(measure_data) and
+                measure_data[current_measure+1]['note_index'] <= message_index):
+            current_measure += 1
+            body += f'<div class="measure" style="left: {(measure_data[current_measure]["start"] /ticks_per_beat) *ZOOM}px;"></div>'
+            body += f'<div class="measure_number" style="left: {(measure_data[current_measure]["start"] /ticks_per_beat) *ZOOM}px;">{current_measure+1}</div>'
+
+        if not midi_event.is_meta:
+            tDelay = midi_event.time / ticks_per_beat
+            accDelay += tDelay
+            note_type = midi_event.type
+
+            if note_type == 'note_on' and midi_event.velocity > 0:
+                # A new note is being pressed, store its starting time position
+                active_notes[midi_event.note] = {"time": accDelay, "color": color_idx, "start_idx": message_index}
+            elif note_type == 'note_off' or (note_type == 'note_on' and midi_event.velocity == 0):
+                # A note is being released, fetch its starting time position
+                # to calculate its duration and create a div
+                if midi_event.note in active_notes:
+                    start_time = active_notes[midi_event.note]["time"]
+                    end_time = accDelay
+                    duration = end_time - start_time
+                    body += (
+                        f'<div class = "note tooltip_parent color_{color_class[active_notes[midi_event.note]["color"]]}" style ="left: {start_time*ZOOM}px; top: {(128-midi_event.note) * 10}px; width: {duration*ZOOM}px">'
+                        f'<div class="tooltip"> '
+                        f'{active_notes[midi_event.note]["start_idx"]}..{message_index} '
+                        f'</div>'
+                        f'</div>')
+                    if start_time+duration > width_roll:
+                        width_roll = start_time+duration
+                    del active_notes[midi_event.note]  # Remove the note from active_notes
+            if message_index in music_splitter.split_data:
+                # body += f'<div class="separator" style="left: {accDelay*ZOOM}px;"></div>'
+                color_idx += 1
+                if color_idx == len(color_class):
+                    color_idx = 0
+
+    html = """
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>Piano Roll</title>
+          <style>
+              .piano-roll {
+                  width: """+str(width_roll*ZOOM)+"""px;
+                  height: 1280px;
+                  position: relative;
+                  background-color: #222;
+              }
+              .tooltip {
+                visibility: hidden;
+                position: relative;
+                top: -22px;
+                left: 17px;
+                background-color: yellow;
+                z-index: 200;
+                font-size: 12px;
+                text-align: center;
+                width: 100px;
+              }
+
+              .tooltip_parent:hover .tooltip {
+                  visibility: visible;
+              }
+              .separator {
+                  height: 1280px;
+                  top: 0px;
+                  background-color: red;
+                  width: 2px;
+                  position: absolute;
+              }
+              .measure {
+                  height: 1280px;
+                  top: 0px;
+                  background-color: cyan;
+                  width: 1px;
+                  position: absolute;
+              }         
+              .measure_number {
+                  position: absolute;
+                  top: 0px;
+                  width: 30px;
+                  z-index: 200;
+                  background-color: darkgray;
+                  text-align: center;
+                  margin-left: 20px;
+              }
+
+              .color_green {
+                  background-color: lightseagreen;
+                  border-top: 1px solid lime;
+                  border-left: 1px solid lime;
+                  border-right: 1px solid black;
+                  border-bottom: 1px solid black;
+              }
+
+              .color_yellow {
+                  background-color: yellow;
+                  border-top: 1px solid white;
+                  border-left: 1px solid white;
+                  border-right: 1px solid brown;
+                  border-bottom: 1px solid brown;
+              }
+
+              .color_red {
+                  background-color: red;
+                  border-top: 1px solid #F88;
+                  border-left: 1px solid #F88;
+                  border-right: 1px solid #800;
+                  border-bottom: 1px solid #800;
+              }
+
+              .color_blue {
+                  background-color: #44F;
+                  border-top: 1px solid #CCF;
+                  border-left: 1px solid #CCF;
+                  border-right: 1px solid #00C;
+                  border-bottom: 1px solid #00C;
+              }
+
+              .note {
+                  position: absolute;
+                  height: 7px;
+              }
+          </style>
+      </head>
+      <body>
+          <div class="piano-roll">
+          """+body+"""
+        </div>
+    </body>
+    </html>
+    """
+
+    with open("piano_roll.html", "w") as f:
+        f.write(html)
+
+
+# test()

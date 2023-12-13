@@ -94,10 +94,10 @@
 	<practice>5</practice>
 	<hands>0</hands>
 	<mute_hand>0</mute_hand>
-	<start_point>10</start_point>
+	<start_point>1</start_point>
     <learn_step>2</learn_step>
 	<end_point>193</end_point>
-	<set_tempo>100</set_tempo>
+	<set_tempo>200</set_tempo>
 	
 	<hand_colorList>[[0, 255, 0], [0, 128, 0], [0, 0, 255],[0, 0, 128], [255, 128, 0], [255, 255, 0], [0, 255, 255],[0, 128, 128], [255, 0, 255], [255, 0, 0], [255, 255, 255], [0, 0, 0]]</hand_colorList>
 	<hand_colorR>6</hand_colorR>

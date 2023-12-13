@@ -40,6 +40,7 @@
         <Learn_MIDI text="Start point"/>
         <Learn_MIDI text="End point"/>
         <Learn_MIDI text="Learn step"/>
+        <Learn_MIDI text="Bookmarks"/>
         <Learn_MIDI text="Set tempo"/>
         <Learn_MIDI text="Hand color R"/>
         <Learn_MIDI text="Hand color L"/>
