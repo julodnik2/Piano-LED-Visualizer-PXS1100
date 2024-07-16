@@ -95,7 +95,7 @@
 	<hands>0</hands>
 	<mute_hand>0</mute_hand>
 	<start_point>1</start_point>
-    <learn_step>2</learn_step>
+    <learn_step>4</learn_step>
 	<end_point>193</end_point>
 	<set_tempo>200</set_tempo>
 	

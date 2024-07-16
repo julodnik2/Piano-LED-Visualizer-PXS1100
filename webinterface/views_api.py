@@ -2,7 +2,7 @@ from webinterface import webinterface
 from flask import render_template, send_file, request, jsonify
 from werkzeug.utils import safe_join
 from lib.functions import find_between, read_only_fs, set_read_only, theaterChase, theaterChaseRainbow, sound_of_da_police, scanner, breathing, \
-    rainbow, rainbowCycle, chords, fastColorWipe, play_midi, clamp
+    rainbow, rainbowCycle, chords, fastColorWipe, play_midi, clamp, remove_song
 import psutil
 import threading
 from lib.neopixel import *
@@ -964,25 +964,7 @@ def change_setting():
                 if name_no_suffix in fname:
                     os.remove("Songs/" + fname)
         else:
-            readonlyfs = read_only_fs()
-            if readonlyfs:
-                set_read_only(False)
-            os.remove("Songs/" + value)
-
-            file_types = [".musicxml", ".xml", ".mxl", ".abc"]
-            for file_type in file_types:
-                try:
-                    os.remove("Songs/" + value.replace(".mid", file_type))
-                except:
-                    pass
-
-            try:
-                os.remove("Songs/cache/" + value + ".p")
-            except:
-                print("No cache file for " + value)
-
-            if readonlyfs:
-                set_read_only(True)
+            remove_song(value)
 
         return jsonify(success=True, reload_songs=True)
 

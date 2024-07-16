@@ -55,6 +55,28 @@ def set_read_only(enable):
         subprocess.call(["/bin/bash", '-c', '-i', 'rw && exit'])
 
 
+def remove_song(song):
+    readonlyfs = read_only_fs()
+    if readonlyfs:
+        set_read_only(False)
+    os.remove("Songs/" + song)
+
+    file_types = [".musicxml", ".xml", ".mxl", ".abc"]
+    for file_type in file_types:
+        try:
+            os.remove("Songs/" + song.replace(".mid", file_type))
+        except:
+            pass
+
+    try:
+        os.remove("Songs/cache/" + song + ".p")
+    except:
+        print("No cache file for " + song)
+
+    if readonlyfs:
+        set_read_only(True)
+
+
 def read_only_fs():
     # Attempt to create a file in the directory
     try:

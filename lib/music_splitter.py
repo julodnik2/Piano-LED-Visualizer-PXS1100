@@ -1,5 +1,6 @@
-from lib.functions import midi_note_num_to_string
+# from lib.functions import midi_note_num_to_string
 import mido
+from mido import MidiFile
 
 
 # def midi_note_num_to_string(note_midi_idx):
@@ -17,27 +18,34 @@ THRESHOLD_CHORD_NOTE_DISTANCE = 0.05
 DEBUG_MARKERS = False
 
 
+class MidiMessageWithTime:
+    time: int
+
+    def __init__(self, msg, time: int):
+        self.msg = msg
+        self.time = time
+
+
 class MusicSplitter:
 
     _gaps_array: list[dict[str, dict[int, float]]]
 
-    def __init__(self, midi_messages, notes_time):
+    def __init__(self, midi_messages: list[MidiMessageWithTime]):
         self.midi_messages = midi_messages
-        self.notes_time = notes_time
 
     def calculate_measure_and_split_data(self, ticks_per_beat, max_length):
         self.measure_data = self.calculate_measure_data(ticks_per_beat)
-        self._gaps_array = self.calculate_note_gaps(self.notes_time)
+        self._gaps_array = MusicSplitter._calculate_note_gaps(self.midi_messages)
         self.split_data = self.do_split(ticks_per_beat, max_length)
 
     def find_note_with_same_time(self, notes_to_press, idx):
-        channel = self.midi_messages[idx].channel
+        channel = self.midi_messages[idx].msg.channel
         for note in notes_to_press:
             for i in range(len(notes_to_press[note])):
                 note_index = notes_to_press[note][i]["idx"]
                 # ipdb.set_trace()
-                if idx != note_index and notes_to_press[note][i]["channel"] == channel and abs(self.notes_time[note_index] - self.notes_time[idx]) < THRESHOLD_CHORD_NOTE_DISTANCE:
-                    return self.notes_time[note_index]
+                if idx != note_index and notes_to_press[note][i]["channel"] == channel and abs(self.midi_messages[note_index].time - self.midi_messages[idx].time) < THRESHOLD_CHORD_NOTE_DISTANCE:
+                    return self.midi_messages[note_index].msg
         return None
 
     def get_next_chord(self, index, channel=None):
@@ -46,11 +54,11 @@ class MusicSplitter:
         for i in range(index + 1, index + 50):
             if i >= len(self.midi_messages):
                 break
-            if time_next_chord is not None and self.notes_time[i] - time_next_chord > THRESHOLD_CHORD_NOTE_DISTANCE:
+            if time_next_chord is not None and self.midi_messages[i].time - time_next_chord > THRESHOLD_CHORD_NOTE_DISTANCE:
                 break
-            if self.midi_messages[i].type == "note_on" and (channel is None or self.midi_messages[i].channel == channel) and self.midi_messages[i].velocity > 0:
+            if self.midi_messages[i].msg.type == "note_on" and (channel is None or self.midi_messages[i].msg.channel == channel) and self.midi_messages[i].msg.velocity > 0:
                 if time_next_chord is None:
-                    time_next_chord = self.notes_time[i]
+                    time_next_chord = self.midi_messages[i].time
                 notes.append(i)
         return notes
 
@@ -64,73 +72,13 @@ class MusicSplitter:
         notes = [self.midi_messages[i].note for i in indices]
         return min(notes) if notes else None
 
-    def calculate_scope_data(self, notes_to_press):
-        last_index = None
-        this_scope_data = ScopeData()
-        # Initialize arrays to hold the lowest and highest notes for channels 0 and 1
-        lowest_note_channel = [-1, -1]
-        highest_note_channel = [-1, -1]
-
-        # Loop over each note in the dictionary
-        for note_number, note_data in notes_to_press.items():
-            channel = note_data[0]["channel"]  # Get the channel for the note
-            if last_index is None or note_data[0]["idx"] > last_index:
-                last_index = note_data[0]["idx"]
-            if channel == 0 or channel == 1:
-                # If the channel is 0 or 1, update the highest and lowest notes for that channel
-                if lowest_note_channel[channel] == -1 or note_number < lowest_note_channel[channel]:
-                    lowest_note_channel[channel] = note_number
-                if highest_note_channel[channel] == -1 or note_number > highest_note_channel[channel]:
-                    highest_note_channel[channel] = note_number
-
-        if highest_note_channel[1] is None:
-            higherChannel = 0
-            gap_between_channels = 100
-        elif highest_note_channel[0] is None:
-            higherChannel = 1
-            gap_between_channels = 100
-        else:
-            higherChannel = 1 if highest_note_channel[1] > highest_note_channel[0] else 0
-            gap_between_channels = lowest_note_channel[higherChannel] - \
-                highest_note_channel[1-higherChannel]
-        for channel in range(2):
-            next_note = self.get_lowest_chord_note_in_channel(channel, last_index)
-            if (lowest_note_channel[channel] != -1
-                    and (next_note is None or next_note >= lowest_note_channel[channel])):
-                if DEBUG_MARKERS:
-                    print("Next note in channel "+str(channel)+" is " +
-                          midi_note_num_to_string(next_note))
-                    print("   which is higher than the lowest shown note " +
-                          midi_note_num_to_string(lowest_note_channel[channel]))
-                if higherChannel != channel or gap_between_channels > 5:
-                    this_scope_data.channel[channel].low.led_count = 3
-                    this_scope_data.channel[channel].low.note = lowest_note_channel[channel]
-                elif gap_between_channels > 1:
-                    this_scope_data.channel[channel].low.led_count = 1
-                    this_scope_data.channel[channel].low.note = lowest_note_channel[channel]
-            next_note = self.get_highest_chord_note_in_channel(channel, last_index)
-            if (highest_note_channel[channel] != -1
-                    and (next_note is None or next_note <= highest_note_channel[channel])):
-                if DEBUG_MARKERS:
-                    print("Next note in channel "+str(channel)+" is " +
-                          midi_note_num_to_string(next_note))
-                    print("   which is lower than the highest shown note " +
-                          midi_note_num_to_string(highest_note_channel[channel]))
-                if higherChannel == channel or gap_between_channels > 5:
-                    this_scope_data.channel[channel].high.led_count = 3
-                    this_scope_data.channel[channel].high.note = highest_note_channel[channel]
-                elif gap_between_channels > 1:
-                    this_scope_data.channel[channel].high.led_count = 1
-                    this_scope_data.channel[channel].high.note = highest_note_channel[channel]
-        return this_scope_data
-
     def do_split(self, ticks_per_beat, max_length):
         accDelay = 0
         tDelay = 0
         msg_index = 0
         collected_notes = {}
         accumulated_chord = None
-        split_data: dict[int, ScopeData] = {}
+        split_data: dict[int, bool] = {}
         release_note_count = 0
         last_press_note_time = -11
 
@@ -139,8 +87,8 @@ class MusicSplitter:
         note_off_found = False
         for msg in self.midi_messages:
 
-            if msg.is_meta and msg.type == 'time_signature':
-                time_signature = float(msg.numerator/msg.denominator)
+            if msg.msg.is_meta and msg.msg.type == 'time_signature':
+                time_signature = float(msg.msg.numerator/msg.msg.denominator)
                 measure_length = int(4 * time_signature * ticks_per_beat)
 
             tDelay = msg.time / measure_length
@@ -152,31 +100,31 @@ class MusicSplitter:
 
             accDelay += tDelay
 
-            if not msg.is_meta:
+            if not msg.msg.is_meta:
                 # Save notes to press
-                if msg.type == 'note_on' and msg.velocity > 0:
+                if msg.msg.type == 'note_on' and msg.msg.velocity > 0:
                     last_press_note_time = currTime
                     if not collected_notes:
                         accDelay = 0    # start calculating from now how much time we accumulated
                         note_off_found = False
-                    if msg.note not in collected_notes:
-                        collected_notes[msg.note] = [
-                            {"idx": msg_index, "channel": msg.channel}]
+                    if msg.msg.note not in collected_notes:
+                        collected_notes[msg.msg.note] = [
+                            {"idx": msg_index, "channel": msg.msg.channel}]
                     else:
-                        collected_notes[msg.note].append(
-                            {"idx": msg_index, "channel": msg.channel})
+                        collected_notes[msg.msg.note].append(
+                            {"idx": msg_index, "channel": msg.msg.channel})
                     if self.find_note_with_same_time(collected_notes, msg_index) and accumulated_chord is None:
                         accumulated_chord = currTime
-                if msg.type == "note_off" and collected_notes:
+                if msg.msg.type == "note_off" and collected_notes:
                     note_off_found = True
 
-                if msg.channel in (0, 1):
-                    current_hand = msg.channel
-                    other_hand = 1 - msg.channel
+                if msg.msg.channel in (0, 1):
+                    current_hand = msg.msg.channel
+                    other_hand = 1 - msg.msg.channel
 
                     gaps = self._gaps_array[msg_index]
                     split_point_found = False
-                    msg_is_note_on_off = msg.type in ['note_on', 'note_off']
+                    msg_is_note_on_off = msg.msg.type in ['note_on', 'note_off']
                     if accDelay >= max_length-0.01:
                         split_point_found = True
                     elif ((gaps['time_to_next'][current_hand] is None or gaps['time_to_next'][current_hand] > 0.12)
@@ -194,11 +142,12 @@ class MusicSplitter:
                         elif not chord1:
                             first_chord = chord0
                         else:
-                            first_chord = chord0 if self.notes_time[chord0[0]] < self.notes_time[chord1[0]] else chord1
+                            first_chord = chord0 if self.midi_messages[chord0[0]
+                                                                       ].time < self.midi_messages[chord1[0]].time else chord1
                         if first_chord is not None and len(first_chord) > 1:
                             split_point_found = True
 
-                    if msg_is_note_on_off and msg.velocity == 0:
+                    if msg_is_note_on_off and msg.msg.velocity == 0:
                         release_note_count += 1
                         if release_note_count > 1:
                             split_point_found = True
@@ -206,17 +155,17 @@ class MusicSplitter:
                     # there are keys to press
                     # last key pressed longer than 0.1 ago
                     if (split_point_found
-                                and msg_is_note_on_off
-                                and collected_notes
-                                and (
-                                    (last_press_note_time < currTime - 0.05 and (
-                                        accumulated_chord is None
-                                        or accumulated_chord < currTime - 0.05
-                                        or not still_notes_in_chord(self.midi_messages, msg_index))
-                                     ))
-                            or note_off_found
-                            ):
-                        split_data[msg_index] = self.calculate_scope_data(collected_notes)
+                            and msg_is_note_on_off
+                            and collected_notes
+                            and (
+                                (last_press_note_time < currTime - 0.05 and (
+                                    accumulated_chord is None
+                                    or accumulated_chord < currTime - 0.05
+                                    or not still_notes_in_chord(self.midi_messages, msg_index))
+                                 ))
+                        or note_off_found
+                        ):
+                        split_data[msg_index] = True
                         collected_notes.clear()
                         accumulated_chord = None
                         note_off_found = False
@@ -236,7 +185,8 @@ class MusicSplitter:
         measure_length = None
 
         # 1. Calculate in which tick measures start taking MeasureOffset tweak into account
-        for i, msg in enumerate(self.midi_messages):
+        for i, midi_message in enumerate(self.midi_messages):
+            msg = midi_message.msg
             if hasattr(msg, "time"):
                 current_ticks += msg.time
                 current_ticks_in_measure += msg.time
@@ -269,7 +219,8 @@ class MusicSplitter:
         current_ticks = 0
         measure_data[0]['note_index'] = 0
 
-        for i, msg in enumerate(self.midi_messages):
+        for i, midi_message in enumerate(self.midi_messages):
+            msg = midi_message.msg
             if hasattr(msg, "time"):
                 current_ticks += msg.time
             if msg.is_meta and msg.type == "text" and msg.text.startswith("SnapToMeasure="):
@@ -283,85 +234,167 @@ class MusicSplitter:
         measure_data[len(measure_data)-1]['note_index'] = len(self.midi_messages)
         return measure_data
 
-    def calculate_note_gaps(self, notes_time):
+    @staticmethod
+    def _calculate_note_gaps(midi_messages: list[MidiMessageWithTime]):
         # fill prev and next time gaps
         prev_note_on = {}
         curr_prev_note_on = {i: -1 for i in range(2)}
 
-        for i, msg in enumerate(self.midi_messages):
+        for i, msg in enumerate(midi_messages):
             prev_note_on[i] = curr_prev_note_on.copy()
-            if msg.type == 'note_on':
-                channel = msg.channel
-                if msg.velocity > 0:
+            if msg.msg.type == 'note_on':
+                channel = msg.msg.channel
+                if msg.msg.velocity > 0:
                     curr_prev_note_on[channel] = i
 
         next_note_on = {}
         curr_next_note_on = {i: -1 for i in range(2)}
-        for i in range(len(self.midi_messages)-1, -1, -1):
-            msg = self.midi_messages[i]
+        for i in range(len(midi_messages)-1, -1, -1):
+            msg = midi_messages[i]
             next_note_on[i] = curr_next_note_on.copy()
-            if msg.type == 'note_on':
-                channel = msg.channel
-                if msg.velocity > 0:
+            if msg.msg.type == 'note_on':
+                channel = msg.msg.channel
+                if msg.msg.velocity > 0:
                     curr_next_note_on[channel] = i
 
         gaps_array: list[dict[str, dict[int, float]]] = [
             {
                 'time_to_prev': {i: float('inf') for i in range(2)},
                 'time_to_next': {i: float('inf') for i in range(2)}
-            } for i in range(len(self.midi_messages))
+            } for i in range(len(midi_messages))
         ]
 
-        for i, msg in enumerate(self.midi_messages):
+        for i, msg in enumerate(midi_messages):
             if i in prev_note_on:
                 if i not in next_note_on:
                     raise Exception("SANITY CHECK ERROR _ test")
                 for c in prev_note_on[i]:
                     if prev_note_on[i][c] is not None:
-                        gaps_array[i]['time_to_prev'][c] = notes_time[i] - \
-                            notes_time[prev_note_on[i][c]]
+                        gaps_array[i]['time_to_prev'][c] = midi_messages[i].time - \
+                            midi_messages[prev_note_on[i][c]].time
                     else:
                         gaps_array[i]['time_to_prev'][c] = float('inf')
                     if next_note_on[i][c] is not None:
-                        gaps_array[i]['time_to_next'][c] = notes_time[next_note_on[i]
-                                                                      [c]] - notes_time[i]
+                        gaps_array[i]['time_to_next'][c] = midi_messages[next_note_on[i]
+                                                                         [c]].time - midi_messages[i].time
                     else:
                         gaps_array[i]['time_to_next'][c] = float('inf')
         return gaps_array
 
+    @staticmethod
+    def _separate_hands(mid: MidiFile):
+        for k in range(len(mid.tracks)):
+            for msg in mid.tracks[k]:
+                if not msg.is_meta:
+                    if len(mid.tracks) == 2:
+                        msg.channel = k
+                    else:
+                        if msg.channel in (0, 1, 2, 3, 4, 5):
+                            msg.channel = msg.channel % 2
+                        if mid.tracks[k].name == 'LH':
+                            msg.channel = 0
+                        if mid.tracks[k].name == 'RH':
+                            msg.channel = 1
+                    if msg.type == 'note_off':
+                        msg.velocity = 0
 
-def still_notes_in_chord(midi_messages, start_idx):
+    @staticmethod
+    def get_key(msg):
+        return msg.note+msg.channel*1024
+
+    @staticmethod
+    def get_note_part(key):
+        return key & 1023
+
+    @staticmethod
+    def create_song_tracks(mid: MidiFile):
+        MusicSplitter._separate_hands(mid)
+        time_passed = 0
+        chord_notes_on = set()
+        unfiltered_song_tracks = mido.merge_tracks(mid.tracks)
+        unfiltered_midi_data: list[MidiMessageWithTime] = []
+        note_states_with_channel: dict[int, bool] = {}  # Tracks the on/off state of notes
+        note_states: dict[int, bool] = {}  # Tracks the on/off state of notes
+
+        for msg in unfiltered_song_tracks:
+            ignore_note = False
+            if hasattr(msg, 'time'):
+                time_passed += msg.time
+                if msg.time > 0:
+                    chord_notes_on.clear()
+            if not msg.is_meta and hasattr(msg, 'note'):
+                note_channel = MusicSplitter.get_key(msg)
+                if msg.type == 'note_on' and msg.velocity > 0:
+                    if msg.note in chord_notes_on:
+                        ignore_note = True
+                    if msg.note in note_states and note_states[msg.note]:
+                        # Insert a note_off event before the new note_on
+                        note_off_msg = mido.Message('note_off', note=msg.note, velocity=0, time=0)
+                        unfiltered_midi_data.append(MidiMessageWithTime(note_off_msg, time_passed))
+                        # Mark the note as off before turning it on again
+                        note_states[msg.note] = False
+                        # set state off for all notes regardless of channel
+                        for key in note_states_with_channel:
+                            if MusicSplitter.get_note_part(key) == msg.note:
+                                note_states_with_channel[key] = False
+                    chord_notes_on.add(msg.note)
+                    note_states[msg.note] = True
+                    note_states_with_channel[note_channel] = True
+                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                    if note_channel in note_states_with_channel and note_states_with_channel[note_channel]:
+                        note_states_with_channel[note_channel] = False
+                        note_states[msg.note] = False
+                    else:
+                        ignore_note = True
+            if not ignore_note:
+                unfiltered_midi_data.append(MidiMessageWithTime(msg, time_passed))
+
+        song_tracks: list[MidiMessageWithTime] = []
+
+        time_passed = 0
+        collected_events_increment_time = 0
+        collected_events: set[MidiMessageWithTime] = set()
+        for msg in unfiltered_midi_data:
+            if time_passed != msg.time:
+                events_to_add: list[MidiMessageWithTime] = []
+                for event in collected_events:
+                    if event.msg.type == 'note_off':
+                        events_to_add.append(event)
+                for event in collected_events:
+                    if event.msg.type != 'note_off':
+                        events_to_add.append(event)
+                first = True
+                increment_time = msg.time - time_passed
+                for event in events_to_add:
+                    if first:
+                        first = False
+                        time_passed = msg.time
+                        event.msg.time = collected_events_increment_time
+                    else:
+                        event.msg.time = 0
+                    song_tracks.append(event)
+                collected_events.clear()
+                collected_events_increment_time = increment_time
+            collected_events.add(msg)
+
+        music_splitter = MusicSplitter(song_tracks)
+        ticks_per_beat = mid.ticks_per_beat
+
+        music_splitter.calculate_measure_and_split_data(ticks_per_beat, 0.125)
+
+        return music_splitter
+
+
+def still_notes_in_chord(midi_messages: list[MidiMessageWithTime], start_idx):
     for idx in range(start_idx + 1, start_idx + 100):
         if idx >= len(midi_messages):
             return False
-        msg = midi_messages[idx]
+        msg = midi_messages[idx].msg
         if hasattr(msg, "time") and msg.time > 0:
             return False
         if msg.type in ('note_on', 'note_off') and msg.velocity > 0:
             return True
     return False
-
-
-class ScopeData:
-    def __init__(self):
-        self.channel = [ScopeDataPerChannel(), ScopeDataPerChannel()]
-
-    def isEmpty(self):
-        return self.channel[0].isEmpty() and self.channel[1].isEmpty()
-
-
-class ScopeDataPerChannel:
-    def __init__(self):
-        self.low = ScopeDataPerDirection()
-        self.high = ScopeDataPerDirection()
-
-    def isEmpty(self):
-        return self.low.led_count == 0 and self.high.led_count == 0
-
-
-class ScopeDataPerDirection:
-    led_count: int = 0
-    note: int = 0
 
 
 def get_tempo(mid):
@@ -371,63 +404,21 @@ def get_tempo(mid):
     return 500000  # If not found return default tempo
 
 
+def sort_midi_events(event: MidiMessageWithTime):
+    event_priority = 0 if event.msg.type == 'note_off' or (event.msg.type == 'note_on' and event.msg.velocity == 0) else 1
+    return (event.time, event_priority)
+
+
 def test():
     # mid = mido.MidiFile('s:\\media\\mp3\\classical\\gershwin\\piano\\midi\\swanee.mid')
-    mid = mido.MidiFile('E:\\strike-up-the-band.mid')
+    mid = mido.MidiFile('s:\\media\\mp3\\classical\\gershwin\\piano\\midi\\the man I love.mid')
     # mid = mido.MidiFile('E:\\sweet-and-low.mid')
     # mid = mido.MidiFile('E:\\backup_piano\\piano_backup_24\\Piano-LED-Visualizer\\Songs\\Albeniz - Granada.mid')
 
     # Get tempo and Ticks per beat
     ticks_per_beat = mid.ticks_per_beat
 
-    for k in range(len(mid.tracks)):
-        for msg in mid.tracks[k]:
-            if not msg.is_meta:
-                if len(mid.tracks) == 2:
-                    msg.channel = k
-                else:
-                    if msg.channel in (0, 1, 2, 3, 4, 5):
-                        msg.channel = msg.channel % 2
-                    if mid.tracks[k].name == 'LH':
-                        msg.channel = 0
-                    if mid.tracks[k].name == 'RH':
-                        msg.channel = 1
-                if msg.type == 'note_off':
-                    msg.velocity = 0
-
-    # Merge tracks
-    time_passed = 0
-    notes_on = set()
-    ignore_note_idx = set()
-    note_idx = 0
-    unfiltered_song_tracks = mido.merge_tracks(mid.tracks)
-    unfiltered_notes_time = []
-
-    for msg in mid:
-        if hasattr(msg, 'time'):
-            time_passed += msg.time
-            if msg.time > 0:
-                notes_on.clear()
-        if not msg.is_meta:
-            if msg.type == 'note_on' and msg.velocity > 0:
-                if msg.note in notes_on:
-                    ignore_note_idx.add(note_idx)
-
-                notes_on.add(msg.note)
-        unfiltered_notes_time.append(time_passed)
-        note_idx += 1
-
-    notes_time = []
-    song_tracks = []
-    for i in range(len(unfiltered_song_tracks)):
-        if not i in ignore_note_idx:
-            song_tracks.append(unfiltered_song_tracks[i])
-            notes_time.append(unfiltered_notes_time[i])
-
-    music_splitter = MusicSplitter(song_tracks, notes_time)
-    music_splitter.calculate_measure_and_split_data(ticks_per_beat, 0.125)
-
-    split_data = music_splitter.split_data
+    music_splitter = MusicSplitter.create_song_tracks(mid)
     measure_data = music_splitter.measure_data
 
     active_notes = {}
@@ -440,7 +431,8 @@ def test():
     color_class = ["red", "green", "yellow", "blue"]
     color_idx = 0
     current_measure = -1
-    for midi_event in song_tracks:
+    for midi_event_and_time in music_splitter.midi_messages:
+        midi_event = midi_event_and_time.msg
         message_index += 1
 
         while (current_measure+1 < len(measure_data) and

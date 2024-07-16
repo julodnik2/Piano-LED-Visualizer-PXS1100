@@ -1,6 +1,6 @@
 from webinterface import webinterface
 from flask import render_template, flash, redirect, request, url_for, jsonify, send_file
-from lib.functions import read_only_fs, set_read_only
+from lib.functions import read_only_fs, remove_song, set_read_only
 import os
 
 ALLOWED_EXTENSIONS = {'mid', 'musicxml', 'mxl', 'xml', 'abc'}
@@ -53,20 +53,29 @@ def ports():
 @webinterface.route('/upload', methods=['POST'])
 def upload_file():
     if request.method == 'POST':
-        if 'file' not in request.files:
-            return jsonify(success=False, error="no file")
-        file = request.files['file']
-        filename = file.filename
-        if os.path.exists("Songs/" + filename):
-            return jsonify(success=False, error="file already exists", song_name=filename)
-        if not allowed_file(file.filename):
-            return jsonify(success=False, error="not a midi file", song_name=filename)
-
-        filename = filename.replace("'", "")
         readonlyfs = read_only_fs()
         if readonlyfs:
             set_read_only(False)
-        file.save(os.path.join(webinterface.config['UPLOAD_FOLDER'], filename))
-        if readonlyfs:
-            set_read_only(True)
-        return jsonify(success=True, reload_songs=True, song_name=filename)
+        try:
+            if 'file' not in request.files:
+                return jsonify(success=False, error="no file")
+            file = request.files['file']
+            filename = file.filename
+
+            reloadAfter = webinterface.learning.loaded_midi == filename
+
+            if os.path.exists("Songs/" + filename):
+                remove_song(filename)
+
+            if not allowed_file(file.filename):
+                return jsonify(success=False, error="not a midi file", song_name=filename)
+
+            filename = filename.replace("'", "")
+            file.save(os.path.join(webinterface.config['UPLOAD_FOLDER'], filename))
+            if reloadAfter:
+                webinterface.learning.loaded_midi = None
+                webinterface.learning.load_midi(filename)
+            return jsonify(success=True, reload_songs=True, song_name=filename)
+        finally:
+            if readonlyfs:
+                set_read_only(True)

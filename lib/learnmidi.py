@@ -1,7 +1,6 @@
 import pickle
 import numpy as np
-from mido import MetaMessage
-from lib.music_splitter import MusicSplitter, still_notes_in_chord
+from lib.music_splitter import MidiMessageWithTime, MusicSplitter, still_notes_in_chord
 from lib.neopixel import getRGB, Color
 from lib.functions import clamp, fastColorWipe, changeAllLedsColor, midi_note_num_to_string, set_read_only, setLedPattern, find_between, get_note_position, get_key_color, touch_file, read_only_fs
 from copy import deepcopy
@@ -24,7 +23,8 @@ TRASPOSE_LEARNING = 0
 if DEBUG:
     import ipdb
 
-CACHE_VERSION = 33
+# lengt
+CACHE_VERSION = 37
 
 
 def find_nearest(array, target):
@@ -65,7 +65,6 @@ class LearnMIDI:
         self.hand_colorL = int(usersettings.get_setting_value("hand_colorL"))
         self.learn_step = int(usersettings.get_setting_value("learn_step"))
 
-        self.notes_time = []
         self.socket_send = []
         self.bookmarks = set()
 
@@ -88,9 +87,9 @@ class LearnMIDI:
             usersettings.get_setting_value("hand_colorList"))
 
         self.song_tempo = 500000
-        self.song_tracks = []
+        self.song_tracks: list[MidiMessageWithTime] = []
         self.ticks_per_beat = 240
-        self.is_loaded_midi = {}
+        self.loaded_midi = None
         self.is_started_midi = False
         self.t = None
         self.current_measure = -1
@@ -186,14 +185,14 @@ class LearnMIDI:
                 print("Loading song from cache")
                 with open('Songs/cache/' + song_path + '.p', 'rb') as handle:
                     cache = pickle.load(handle)
+                    version = cache['version'] if 'version' in cache else 1
                     self.song_tempo = cache['song_tempo']
                     self.ticks_per_beat = cache['ticks_per_beat']
                     self.song_tracks = cache['song_tracks']
-                    self.notes_time = cache['notes_time']
                     self.measure_data = cache['measure_data']
                     self.split_data = cache['split_data']
                     self.loading = 4
-                    return cache['version'] if 'version' in cache else 1
+                    return version
             else:
                 return -1
         except Exception as e:
@@ -207,11 +206,10 @@ class LearnMIDI:
         touch_file(song_path)
         self.readonly(True)
 
-        if song_path in self.is_loaded_midi.keys():
+        if song_path == self.loaded_midi:
             return
 
-        self.is_loaded_midi.clear()
-        self.is_loaded_midi[song_path] = True
+        self.loaded_midi = song_path
         self.loading = 1  # 1 = Load..
         self.is_started_midi = False  # Stop current learning song
         self.t = threading.currentThread()
@@ -221,7 +219,7 @@ class LearnMIDI:
         if cache_version == CACHE_VERSION:
             self.load_bookmarks(song_path)
             return
-        print("Cached file :"+str(cache_version)+". Expected: "+str(CACHE_VERSION))
+        print("Version in cached file :"+str(cache_version)+". Current format is : " + str(CACHE_VERSION) + ". Reload needed.")
 
         try:
             # Load the midi file
@@ -233,67 +231,22 @@ class LearnMIDI:
 
             # Assign Tracks to different channels before merging to know the message origin
             self.loading = 2  # 2 = Process
-            if len(mid.tracks) == 2:  # check if the midi file has only 2 Tracks
-                offset = 1
-            else:
-                offset = 0
-
-            for k in range(len(mid.tracks)):
-                for msg in mid.tracks[k]:
-                    if not msg.is_meta:
-                        if len(mid.tracks) == 2:
-                            msg.channel = k
-                        else:
-                            if msg.channel in (0, 1, 2, 3, 4, 5):
-                                msg.channel = msg.channel % 2
-                            if mid.tracks[k].name == 'LH':
-                                msg.channel = 0
-                            if mid.tracks[k].name == 'RH':
-                                msg.channel = 1
-                        if msg.type == 'note_off':
-                            msg.velocity = 0
 
             # Merge tracks
             self.loading = 3  # 3 = Merge
-            time_passed = 0
-            notes_on = set()
-            ignore_note_idx = set()
-            note_idx = 0
-            unfiltered_song_tracks = mido.merge_tracks(mid.tracks)
-            unfiltered_notes_time = []
 
-            for msg in mid:
-                if hasattr(msg, 'time'):
-                    time_passed += msg.time
-                    if msg.time > 0:
-                        notes_on.clear()
-                if not msg.is_meta:
-                    if msg.type == 'note_on' and msg.velocity > 0:
-                        if msg.note in notes_on:
-                            ignore_note_idx.add(note_idx)
+            music_splitter = MusicSplitter.create_song_tracks(mid)
 
-                        notes_on.add(msg.note)
-                unfiltered_notes_time.append(time_passed)
-                note_idx += 1
-
-            self.notes_time.clear()
-            self.song_tracks.clear()
-            for i in range(len(unfiltered_song_tracks)):
-                if not i in ignore_note_idx:
-                    self.song_tracks.append(unfiltered_song_tracks[i])
-                    self.notes_time.append(unfiltered_notes_time[i])
-
-            music_splitter = MusicSplitter(self.song_tracks, self.notes_time)
-            music_splitter.calculate_measure_and_split_data(self.ticks_per_beat, 0.125)
             self.split_data = music_splitter.split_data
             self.measure_data = music_splitter.measure_data
+            self.song_tracks = music_splitter.midi_messages
 
             fastColorWipe(self.ledstrip.strip, True, self.ledsettings)
             self.readonly(False)
             # Save to cache
             with open('Songs/cache/' + song_path + '.p', 'wb') as handle:
                 cache = {'song_tempo': self.song_tempo, 'ticks_per_beat': self.ticks_per_beat,
-                         'notes_time': self.notes_time, 'song_tracks': self.song_tracks,
+                         'song_tracks': self.song_tracks,
                          'measure_data': self.measure_data, 'version': CACHE_VERSION,
                          'split_data': self.split_data}
                 pickle.dump(cache, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -306,7 +259,7 @@ class LearnMIDI:
             print(e)
             traceback.print_exc()
             self.loading = 5  # 5 = Error!
-            self.is_loaded_midi.clear()
+            self.loaded_midi = None
 
     def show_notes_to_press(self, current_index, notes_to_press):
         for note in notes_to_press:
@@ -342,32 +295,6 @@ class LearnMIDI:
             self.set_pixel_color(note_position, Color(green, red, blue), None)
 
         markerColor = Color(LOWEST_LED_BRIGHT, LOWEST_LED_BRIGHT, 0)
-
-        if current_index in self.split_data:
-            scope_data = self.split_data[current_index]
-        else:
-            music_splitter = MusicSplitter(self.song_tracks, self.notes_time)
-            scope_data = music_splitter.calculate_scope_data(notes_to_press)
-
-        if not scope_data.isEmpty():
-            for channel in range(2):
-                if not scope_data.channel[channel].isEmpty():
-                    scope = scope_data.channel[channel].low
-                    if scope.led_count > 0:
-                        note_position = get_note_position(scope.note, self.ledstrip,
-                                                          self.ledsettings, TRASPOSE_LEARNING*self.traspose)
-                        s = 2 if scope.led_count == 3 else 0
-                        for i in range(scope.led_count):
-                            led = note_position - i - s - 1
-                            self.set_pixel_color(led, markerColor, "MARKER")
-                    scope = scope_data.channel[channel].high
-                    if scope.led_count > 0:
-                        note_position = get_note_position(scope.note, self.ledstrip,
-                                                          self.ledsettings, TRASPOSE_LEARNING*self.traspose)
-                        s = 2 if scope.led_count == 3 else 0
-                        for i in range(scope.led_count):
-                            led = note_position + i + s + 1
-                            self.set_pixel_color(led, markerColor, "MARKER")
 
         self.ledstrip.strip.show()
 
@@ -523,7 +450,7 @@ class LearnMIDI:
         msg = self.song_tracks[note_idx]
         if DEBUG:
             print("      note ["+str(msg.channel)+"] : "+str(note_idx)+"@"+format(
-                self.notes_time[note_idx], '.2f')+"  " + self.midi_note_to_notation(msg))
+                self.song_tracks[note_idx].time, '.2f')+"  " + self.midi_note_to_notation(msg))
 
     def modify_brightness(self, color, new_brightness):
         green, red, blue = getRGB(color)
@@ -555,7 +482,9 @@ class LearnMIDI:
             msg_index = start_idx
             self.current_measure = start
 
-            for msg in self.song_tracks[start_idx:end_idx]:
+            for msg_and_time in self.song_tracks[start_idx:end_idx]:
+                msg = msg_and_time.msg
+
                 # Exit thread if learning is stopped
                 if not self.is_started_midi:
                     break
@@ -564,12 +493,12 @@ class LearnMIDI:
                 tDelay = mido.tick2second(msg.time, self.ticks_per_beat, self.song_tempo * 100 / self.set_tempo)
 
                 # Realize time delay, consider also the time lost during computation
-                delay = max(0, tDelay - (
-                    time.time() - time_prev) - 0.003)  # 0.003 sec calibratable to acount for extra time loss
-                if msg_index > start_idx and self.notes_time[msg_index] > self.notes_time[msg_index-1]:
+                delay = tDelay - (time.time() - time_prev) - 0.003  # 0.003 sec calibratable to acount for extra time loss
+                if msg_index > start_idx and msg_and_time.time > self.song_tracks[msg_index-1].time:
                     self.ledstrip.strip.show()
-
-                time.sleep(delay)
+                    delay = delay - 0.05
+                if delay > 0:
+                    time.sleep(delay)
                 time_prev = time.time()
                 while (self.current_measure+1 < len(self.measure_data) and
                        self.measure_data[self.current_measure+1]['note_index'] <= msg_index):
@@ -744,7 +673,8 @@ class LearnMIDI:
 
                 self.restart_blind = False
                 msg_index = start_idx - 1
-                for msg in self.song_tracks[start_idx:end_idx]:
+                for msg_and_time in self.song_tracks[start_idx:end_idx]:
+                    msg = msg_and_time.msg
                     msg_index += 1
                     # Exit thread if learning is stopped
                     if not self.is_started_midi:
@@ -828,11 +758,17 @@ class LearnMIDI:
                                 (self.hands == 2 and self.mute_hand != 1 and msg.channel == 0)
                                 # send midi sound for Right hand
                         ):
-                            self.midiports.playport.send(msg)
+                            if msg.type in ['note_on', 'note_off']:
+                                # Create a new message with the same type, note, and channel, but with max velocity (127)
+                                new_msg = msg.copy(velocity=127)
+                                self.midiports.playport.send(new_msg)
+                            else:
+                                # For other types of messages, just forward them as they are
+                                self.midiports.playport.send(msg)
 
                     # Realize time delay, consider also the time lost during computation
                     # 0.003 sec calibratable to acount for extra time loss
-                    delay = max(0, tDelay - (time.time() - time_prev) - 0.003)
+                    delay = max(0, tDelay - (time.time() - time_prev) - 10.003)
                     wait_until = time.time() + delay
                     while time.time() < wait_until:
                         self.process_midi_events()
@@ -844,7 +780,7 @@ class LearnMIDI:
                     # Check notes to press
                     if not msg.is_meta:
                         try:
-                            self.socket_send.append(self.notes_time[msg_index])
+                            self.socket_send.append(self.song_tracks[msg_index].time)
                         except Exception as e:
                             print(e)
 
@@ -866,7 +802,7 @@ class LearnMIDI:
                                 note_position = get_note_position(
                                     msg.note, self.ledstrip, self.ledsettings, TRASPOSE_LEARNING*self.traspose)
                                 self.set_pixel_color(note_position, Color(0, 0, 0), None)
-                                self.ledstrip.strip.show()
+                                # self.ledstrip.strip.show()
 
                 if self.practice in (PRACTICE_MELODY, PRACTICE_ARCADE, PRACTICE_PROGRESSIVE, PRACTICE_PERFECTION):
                     self.wait_notes_to_press(msg_index,
@@ -983,7 +919,7 @@ class LearnMIDI:
             self.readonly(False)
             with open(self.bookmark_filename, 'wb') as handle:
                 cache = {'song_tempo': self.song_tempo, 'ticks_per_beat': self.ticks_per_beat,
-                         'notes_time': self.notes_time, 'song_tracks': self.song_tracks,
+                         'song_tracks': self.song_tracks,
                          'measure_data': self.measure_data,
                          'split_data': self.split_data}
                 pickle.dump(self.bookmarks, handle, protocol=pickle.HIGHEST_PROTOCOL)
